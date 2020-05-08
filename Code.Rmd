@@ -1,0 +1,222 @@
+---
+title: "Assignment2"
+author: "Tahsin"
+date: "2 May 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(GEOquery)
+library(R.utils)
+library(reshape2)
+library(ggplot2)
+library(limma)
+library(dplyr)
+library(shiny)
+library(shinyjs)
+library(bomrang)
+library(tidyverse)
+```
+
+```{r}
+clinical_outcome <-getGEO("GSE120396")
+clinical_outcome<- clinical_outcome$GSE120396_series_matrix.txt.gz
+print(clinical_outcome$characteristics_ch1.1[1:10])
+rejection_status  <- clinical_outcome$characteristics_ch1.1
+rejection_status <- unlist(lapply( strsplit(as.character(rejection_status), ": " ) , `[[` , 2)  )
+table(rejection_status)
+```
+
+```{r}
+datadir <- "data/GSE120396_RAW/"
+fileNames <- list.files(datadir)
+print(fileNames[1:5])
+#for (files in fileNames){
+#  gunzip(file.path(datadir,files))
+#}
+gse = c()
+for(i in 1:length(fileNames)){
+  temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
+  gse <- cbind(gse, temptable[,2])
+  colnames(gse)[i] <- colnames(temptable)[2]
+}
+
+rownames(gse) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+dim(gse)
+```
+```{r}
+#print(rownames(gse[1:50, ]))
+#summary(gse[,1])
+#boxplot(gse)
+
+```
+```{r}
+RFplot <- function(cvK, n_sim, genes){
+#largevar = apply(gse, 1, var)
+#ind = which(largevar > quantile(largevar, 0.9))
+ind = genes
+X = as.matrix(t(gse[1:ind,]))
+y = rejection_status
+
+#n_sim = 50
+#cvK = 5  # number of CV folds
+cv_50acc5_rf = c()
+cv_acc_rf = c()
+
+for (i in 1:n_sim) {
+
+  cvSets = cvTools::cvFolds(nrow(X), cvK)  # permute all the data, into 5 folds
+  cv_acc_rf = c()
+  
+  for (j in 1:cvK) {
+    test_id = cvSets$subsets[cvSets$which == j]
+    X_test = X[test_id, ]
+    X_train = X[-test_id, ]
+    y_test = y[test_id]
+    y_train = y[-test_id]
+    
+    ##RandomForest
+    rf_res <- randomForest::randomForest(x = X_train, y = as.factor(y_train))
+    fit <- predict(rf_res, X_test)
+    cv_acc_rf[j] = table(fit, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+  }
+  cv_50acc5_rf <- append(cv_50acc5_rf, mean(cv_acc_rf))
+}
+
+boxplot(cv_50acc5_rf)
+}
+```
+
+```{r}
+KNNplot <- function(cvK, n_sim, knn, genes){
+#largevar = apply(gse, 1, var)
+#ind = which(largevar > quantile(largevar, 0.9))
+ind = genes
+X = as.matrix(t(gse[1:ind,]))
+y = rejection_status
+
+#cvK = input$k  # number of CV folds
+cv_50acc5_knn = c()
+cv_acc_knn = c()
+
+#n_sim = 50 ## number of repeats
+for (i in 1:n_sim) {
+
+  cvSets = cvTools::cvFolds(nrow(X), cvK)  # permute all the data, into 5 folds
+  cv_acc_knn = c()
+  
+  for (j in 1:cvK) {
+    test_id = cvSets$subsets[cvSets$which == j]
+    X_test = X[test_id, ]
+    X_train = X[-test_id, ]
+    y_test = y[test_id]
+    y_train = y[-test_id]
+    
+    ## KNN
+    fit5 = class::knn(train = X_train, test = X_test, cl = y_train, k = knn)
+    cv_acc_knn[j] = table(fit5, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+    
+  }
+  cv_50acc5_knn <- append(cv_50acc5_knn, mean(cv_acc_knn))
+}
+
+boxplot(cv_50acc5_knn)
+}
+```
+
+
+```{r}
+SVMplot <- function(cvK, n_sim, genes){
+#largevar = apply(gse, 1, var)
+#ind = which(largevar > quantile(largevar, 0.9))
+ind = genes
+X = as.matrix(t(gse[1:ind,]))
+y = rejection_status
+
+#cvK = 5  # number of CV folds
+cv_50acc5_svm = c()
+cv_acc_svm = c()
+
+#n_sim = 50 ## number of repeats
+for (i in 1:n_sim) {
+
+  cvSets = cvTools::cvFolds(nrow(X), cvK)  # permute all the data, into 5 folds
+  cv_acc_svm = c()
+  
+  for (j in 1:cvK) {
+    test_id = cvSets$subsets[cvSets$which == j]
+    X_test = X[test_id, ]
+    X_train = X[-test_id, ]
+    y_test = y[test_id]
+    y_train = y[-test_id]
+    
+    ## SVM
+    svm_res <- e1071::svm(x = X_train, y = as.factor(y_train))
+    fit <- predict(svm_res, X_test)
+    cv_acc_svm[j] = table(fit, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+    
+  }
+  cv_50acc5_svm <- append(cv_50acc5_svm, mean(cv_acc_svm))
+}
+
+boxplot(cv_50acc5_svm)
+}
+```
+
+```{r}
+ui <- fluidPage(
+  pageWithSidebar(
+    headerPanel("Performance of Classification Models"),
+  
+    sidebarPanel(
+      selectInput(inputId = "classifiers", label = "Choose ML Technique", choices = c("K-nearest neighbors" = "KNN", "Support Vector Machine" = "SVM", "Random Forest" = "RF")),
+      numericInput(inputId = "genes", label = "Choose no. of genes", value = 5000, min = 1, max = 11721),
+      tags$head(tags$style(HTML('.irs-from, .irs-to, .irs-min, .irs-max {
+            visibility: hidden !important;
+    }'))),
+    
+    conditionalPanel(
+  condition = "input.classifiers == 'KNN'",
+  tags$head(tags$style(HTML('.irs-from, .irs-to, .irs-min, .irs-max {
+            visibility: hidden !important;
+    }'))),
+  sliderInput(inputId = "k", label = "Choose no. of nearest neighbours", min = 1, max = 300, value = 5),
+  numericInput(inputId = "cvK", label = "Choose no. of Cross Validation folds", value = 5, min = 1, max = 100),
+    numericInput(inputId = "n", label = "Choose no. of simulations", value = 25, min = 1, max = 300)),
+  conditionalPanel(
+  condition = "input.classifiers != 'KNN'",
+  tags$head(tags$style(HTML('.irs-from, .irs-to, .irs-min, .irs-max {
+            visibility: hidden !important;
+    }'))),
+  numericInput(inputId = "cvK1", label = "Choose no. of Cross Validation folds", value = 5, min = 1, max = 25),
+    numericInput(inputId = "n1", label = "Choose no. of simulations", value = 25, min = 1, max = 300))),
+  
+    mainPanel(
+      plotOutput("boxplot")
+  ))
+)
+server <- function(input, output){
+  output$boxplot <- renderPlot({
+    cvK = input$cvK
+    n = input$n
+    knn = input$k
+    g = input$genes
+    if (input$classifiers == "KNN"){ 
+      KNNplot(cvK,n,knn,g)
+    }
+    if (input$classifiers == "SVM") {
+      SVMplot(input$cvK1,input$n1,g)
+    }
+    if (input$classifiers == "RF") {
+      RFplot(input$cvK1,input$n1,g)
+    }
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
